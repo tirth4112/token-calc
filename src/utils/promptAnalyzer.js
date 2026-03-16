@@ -58,6 +58,7 @@ export const analyzePrompt = async (prompt) => {
     result.score = Object.values(result.breakdown).reduce((a, b) => a + b, 0);
 
     // Gemini AI Optimization (Asynchronous part)
+    console.log("Starting Gemini AI Optimization for prompt...");
     try {
         const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`, {
             method: "POST",
@@ -71,7 +72,7 @@ export const analyzePrompt = async (prompt) => {
             
             Also, estimate how long (in seconds or minutes) a state-of-the-art AI like Claude 3.5 Sonnet or Antigravity would take to complete the task described in the prompt.
             
-            Respond ONLY in JSON format with the following keys:
+            Respond ONLY in valid JSON format with the following keys:
             "optimized_prompt": (the rewritten prompt),
             "estimated_completion_time": (a string like "15 seconds" or "2 minutes")
 
@@ -82,21 +83,45 @@ export const analyzePrompt = async (prompt) => {
             })
         });
 
+        if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(`API returned ${response.status}: ${errorText}`);
+        }
+
         const data = await response.json();
-        if (data.candidates && data.candidates[0].content.parts[0].text) {
+        console.log("Gemini API Full Response:", data);
+
+        if (data.candidates && data.candidates[0].content && data.candidates[0].content.parts && data.candidates[0].content.parts[0].text) {
             const aiResponseText = data.candidates[0].content.parts[0].text;
-            // Extract JSON if AI wrapped it in markdown
+            console.log("Raw AI Response Text:", aiResponseText);
+
+            // Extract JSON if AI wrapped it in markdown or added extra text
             const jsonMatch = aiResponseText.match(/\{[\s\S]*\}/);
             if (jsonMatch) {
-                const aiData = JSON.parse(jsonMatch[0]);
-                result.optimizedPrompt = aiData.optimized_prompt;
-                result.estimatedTime = aiData.estimated_completion_time;
+                try {
+                    const aiData = JSON.parse(jsonMatch[0]);
+                    result.optimizedPrompt = aiData.optimized_prompt || "Could not optimize prompt.";
+                    result.estimatedTime = aiData.estimated_completion_time || "Unknown";
+                    console.log("Successfully parsed AI optimization data:", result.optimizedPrompt);
+                } catch (pError) {
+                    console.error("Failed to parse extracted JSON:", pError);
+                    result.optimizedPrompt = aiResponseText;
+                    result.estimatedTime = "Parsing error";
+                }
+            } else {
+                console.warn("No JSON pattern found in AI response, using raw text.");
+                result.optimizedPrompt = aiResponseText;
+                result.estimatedTime = "Format error";
             }
+        } else {
+            console.error("Unexpected Gemini API structure:", data);
+            result.optimizedPrompt = "API call failed - Unexpected response format.";
+            result.estimatedTime = "N/A";
         }
     } catch (error) {
         console.error("Gemini API call failed:", error);
-        result.optimizedPrompt = "AI optimization unavailable at the moment.";
-        result.estimatedTime = "N/A";
+        result.optimizedPrompt = "AI optimization unavailable: " + error.message;
+        result.estimatedTime = "Error";
     }
 
     return result;
